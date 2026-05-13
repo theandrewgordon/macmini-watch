@@ -1,60 +1,200 @@
 # macmini-watch
 
-A tiny GitHub Actions cron that watches Apple's Certified Refurbished store for an **M4 Mac mini** at-or-below a target price and pings a Slack channel when one shows up.
+A tiny GitHub Actions watcher for Apple's Certified Refurbished Mac mini page.
 
-Runs every ~10 minutes, dedupes hits so you don't get spammed, and shuts up entirely when there's no inventory. Roughly 100 lines of Python with no dependencies.
+It checks for refurbished **M4 Mac mini** listings at-or-below your target price and sends a notification through Slack and/or ntfy.sh.
 
-## How it works
+## Why this version exists
 
-1. `check.py` fetches `https://www.apple.com/shop/refurbished/mac/mac-mini`.
-2. Parses the page for listings that mention "Mac mini" + "M4" with a price at-or-below `PRICE_CAP`.
-3. Compares against `state.json` (committed back to the repo each run) so duplicate listings only alert once.
-4. POSTs new hits to a Slack incoming webhook.
+This version is rewritten to be easier to troubleshoot:
 
-GitHub Actions cron is best-effort and typically lands every 10–20 minutes — fine for refurb watch, not fine if you need sub-minute polling.
+- Clear test ping support
+- Slack response status/body logging
+- Optional ntfy.sh fallback notifications
+- Manual `force_notify` mode to prove the parser + notifier works
+- Safer state handling so repeated hits are not spammed
+- No third-party Python dependencies
 
-## Setup
+## Files
 
-1. **Fork this repo** (or use it as a template).
-2. **Create a Slack incoming webhook**:
-   - https://api.slack.com/apps → Create New App → From scratch
-   - Activate Incoming Webhooks → Add New Webhook to Workspace → pick the channel
-   - Copy the URL (looks like `https://hooks.slack.com/services/...`)
-3. **Add the webhook as a repo secret**:
-   - Settings → Secrets and variables → Actions → New repository secret
-   - Name: `SLACK_WEBHOOK_URL`
-   - Value: the webhook URL
-4. **(Optional) Tune the price cap**:
-   - Edit the `PRICE_CAP` env var in `.github/workflows/macmini.yml`
-   - Default is `600`
-5. **(Optional) Tag a Slack user on real hits**:
-   - Add a repo secret `SLACK_MENTION_USER_IDS` with one or more Slack user IDs (e.g. `U07PCFNRLH3` or `U07PCFNRLH3,U08ABCDE123`).
-   - All Slack messages (including test pings) will be prefixed with `<@user>` mentions.
-6. The cron starts on its own once pushed.
-
-## Manual test ping
-
-Confirms the webhook is wired up without waiting for inventory.
-
-Actions tab → **Mac Mini stock watch** → **Run workflow** → check **Send a Slack test ping and exit** → Run.
-
-You should see a `:rotating_light: Mac mini $X hit — TEST` message in your Slack channel within a few seconds.
-
-## Local dry-run
-
-```sh
-SLACK_WEBHOOK_URL="" python3 check.py
+```text
+.github/workflows/macmini.yml      Main scheduled watcher
+.github/workflows/notify-test.yml  Simple notification smoke test
+check.py                           Watcher/parser/notifier script
+state.json                         Deduplication state
 ```
 
-Empty webhook = dry-run. The script logs what it would have posted to stderr instead of actually posting.
+## Quick setup
 
-## Adapting it
+### Option A: Slack
 
-This is purpose-built for Apple Refurb Mac mini M4. To watch a different product:
+1. In Slack, create an Incoming Webhook.
+2. Choose the channel it should post into.
+3. Copy the webhook URL.
+4. In GitHub repo settings, add this repository secret:
 
-- Change the URL and the regex in `check_apple_refurb()` to match the new page.
-- Apple's refurb site is server-rendered HTML, which makes parsing trivial. Other retailers (Amazon, Best Buy) heavily block GitHub Actions IPs with 503s and CAPTCHAs — a previous version of this repo tried and gave up. If you need those, expect to use a third-party scraping service.
+```text
+SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...
+```
 
-## License
+Optional Slack mentions:
 
-MIT — see [LICENSE](LICENSE).
+```text
+SLACK_MENTION_USER_IDS=U1234567890
+```
+
+For multiple users:
+
+```text
+SLACK_MENTION_USER_IDS=U1234567890,U0987654321
+```
+
+### Option B: ntfy.sh, easier fallback
+
+1. Pick a hard-to-guess topic name, for example:
+
+```text
+andrew-macmini-watch-837462
+```
+
+2. Add this GitHub repository secret:
+
+```text
+NTFY_TOPIC=andrew-macmini-watch-837462
+```
+
+3. Subscribe to that topic using the ntfy mobile app or browser:
+
+```text
+https://ntfy.sh/andrew-macmini-watch-837462
+```
+
+You may configure Slack, ntfy, or both.
+
+## Test notifications first
+
+Go to:
+
+```text
+GitHub repo → Actions → Notification smoke test → Run workflow
+```
+
+Expected Slack success looks like:
+
+```text
+HTTP/2 200
+ok
+```
+
+Expected ntfy success looks like HTTP 200/2xx with a JSON response.
+
+If this smoke test fails, the watcher is not the problem. Fix the secret or notification service first.
+
+## Run the watcher manually
+
+Go to:
+
+```text
+GitHub repo → Actions → Mac Mini stock watch → Run workflow
+```
+
+Useful manual settings:
+
+```text
+test_ping = true
+```
+
+Sends a test notification through `check.py` and exits.
+
+```text
+force_notify = true
+price_cap = 2000
+```
+
+Alerts on every parsed M4 Mac mini listing, even above your normal target. Use this only to test end-to-end behavior.
+
+## Normal scheduled behavior
+
+The workflow runs every 10 minutes:
+
+```yaml
+- cron: "*/10 * * * *"
+```
+
+GitHub cron is best-effort, so it may run late or occasionally skip.
+
+## Price cap
+
+The default scheduled cap is set in `.github/workflows/macmini.yml`:
+
+```yaml
+PRICE_CAP: ... '700'
+```
+
+Change that to your target price.
+
+For manual runs, use the `price_cap` workflow input.
+
+## Interpreting logs
+
+Good fetch:
+
+```text
+[fetch] https://www.apple.com/shop/refurbished/mac/mac-mini -> 200 (... bytes)
+```
+
+Parser found page content:
+
+```text
+[apple] 'Mac mini' x5, 'M4' x435, distinct prices: [...]
+```
+
+No matching deals:
+
+```text
+hits this run: 0
+```
+
+Slack test success:
+
+```text
+[slack] status=200, body='ok'
+```
+
+Slack problem:
+
+```text
+[slack] HTTP error status=400, body='invalid_payload'
+[slack] HTTP error status=404, body='no_service'
+[slack] HTTP error status=403, body='action_prohibited'
+```
+
+Missing secret:
+
+```text
+[slack] skipped: SLACK_WEBHOOK_URL is empty/missing
+```
+
+## Local dry run
+
+From the repo folder:
+
+```sh
+PRICE_CAP=2000 FORCE_NOTIFY=1 python3 check.py
+```
+
+Test Slack locally:
+
+```sh
+SLACK_WEBHOOK_URL='https://hooks.slack.com/services/...' TEST_PING=1 python3 check.py
+```
+
+Test ntfy locally:
+
+```sh
+NTFY_TOPIC='andrew-macmini-watch-837462' TEST_PING=1 python3 check.py
+```
+
+## Important note
+
+Slack webhooks post to the channel selected when the webhook was created. They do not necessarily post into the app direct-message screen.
