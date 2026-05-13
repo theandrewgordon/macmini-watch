@@ -1,0 +1,21 @@
+name: Slack webhook test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send Slack test
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          if [ -z "$SLACK_WEBHOOK_URL" ]; then
+            echo "SLACK_WEBHOOK_URL is missing"
+            exit 1
+          fi
+
+          curl -X POST -H 'Content-type: application/json' \
+            --data '{"text":"✅ Slack webhook test from GitHub Actions"}' \
+            "$SLACK_WEBHOOK_URL"
