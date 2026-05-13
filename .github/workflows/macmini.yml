@@ -8,7 +8,7 @@ on:
       test_ping:
         description: "Send a Slack test ping and exit (no real check)"
         type: boolean
-        default: true
+        default: false
 
 permissions:
   contents: write
